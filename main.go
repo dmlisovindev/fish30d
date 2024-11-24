@@ -36,7 +36,7 @@ var (
 	sharkImage []byte
 	//go:embed resources/jellyfish.png
 	jellyImage []byte
-	//go:embed resources/Fixedsys62.ttf
+	//go:embed resources/TheGoodMonolith.ttf
 	fixedsys []byte
 	//go:embed resources/AquaWow.otf
 	aquawow []byte
@@ -47,9 +47,11 @@ var (
 		"Try again.",
 		"You've got a valuable lesson.",
 		"Press Spacebar to restart.",
-		"Be careful next time",
+		"Be careful next time.",
 		"So it goes.",
 		"It happens.",
+		"Too greedy.",
+		"You just went belly up.",
 		"Some fish can swallow prey 3 times their own size. Alas, you're not one of those.",
 		"There's always a bigger fish.",
 		"Don't bite more than you can swallow.",
@@ -215,13 +217,13 @@ func (fish *Fish) Die() bool {
 	return false
 }
 
-func (fish *Fish) Draw(screen *ebiten.Image) {
+func (fish *Fish) Draw() {
 	if fish.GraphUpdated {
 		fish.GraphReset()
 	} else {
 		fish.DrawOptions.GeoM.Translate(fish.SpeedX, fish.SpeedY)
 	}
-	colorm.DrawImage(screen, fish.Image, *fish.Colorm, fish.DrawOptions)
+	colorm.DrawImage(fish.game.screen, fish.Image, *fish.Colorm, fish.DrawOptions)
 }
 
 func (fish *Fish) GraphReset() {
@@ -253,9 +255,8 @@ func (fish *PlayerFish) Hit(target *Fish) {
 		} else {
 			if target.Die() {
 				fish.SetSize(fish.Size + 1)
-				fish.game.eaten++
-				fish.game.score += target.Size
-				if fish.HalfWidth*2 > float64(screenWidth) {
+				fish.game.UpdateScore(target.Size)
+				if fish.HalfWidth*2 > fish.game.screenWidth {
 					fish.game.Win()
 				}
 			}
@@ -297,15 +298,15 @@ func (fish *Fish) IsOutOfBounds() (isOut, vertical bool) {
 	if fish.Cooldown != 0 {
 		return false, false
 	}
-	horizontal := !(fish.X >= -fish.HalfWidth && fish.X <= screenWidth+fish.HalfWidth)
-	vertical = !(fish.Y >= -fish.HalfHeight && fish.Y <= screenHeight+fish.HalfHeight)
+	horizontal := !(fish.X >= -fish.HalfWidth && fish.X <= fish.game.screenWidth+fish.HalfWidth)
+	vertical = !(fish.Y >= -fish.HalfHeight && fish.Y <= fish.game.screenHeight+fish.HalfHeight)
 	isOut = horizontal || vertical
 	return
 }
 
 func (fish *PlayerFish) IsOutOfBounds() (isOut, vertical bool) {
-	horizontal := (fish.SpeedX < 0 && fish.X < fish.HalfWidth) || (fish.SpeedX > 0 && fish.X > screenWidth-fish.HalfWidth)
-	vertical = (fish.SpeedY < 0 && fish.Y < fish.HalfHeight) || (fish.SpeedY > 0 && fish.Y > screenHeight+fish.HalfHeight)
+	horizontal := (fish.SpeedX < 0 && fish.X < fish.HalfWidth) || (fish.SpeedX > 0 && fish.X > fish.game.screenWidth-fish.HalfWidth)
+	vertical = (fish.SpeedY < 0 && fish.Y < fish.HalfHeight) || (fish.SpeedY > 0 && fish.Y > fish.game.screenHeight+fish.HalfHeight)
 	isOut = horizontal || vertical
 	return
 }
@@ -395,16 +396,16 @@ func (fish *Fish) Randomize() {
 	if fish.Type == "jelly" {
 		fish.SpeedY = fish.SpeedX
 		fish.SpeedX = 0
-		fish.X = float64(rand.Intn(screenWidth))
+		fish.X = float64(rand.Intn(int(fish.game.screenWidth)))
 		if fish.SpeedY < 0 {
-			fish.Y = screenHeight + fish.HalfHeight - 1
+			fish.Y = fish.game.screenHeight + fish.HalfHeight - 1
 		} else {
 			fish.Y = 1 - fish.HalfHeight
 		}
 	} else {
-		fish.Y = float64(rand.Intn(screenHeight))
+		fish.Y = float64(rand.Intn(int(fish.game.screenHeight)))
 		if fish.SpeedX < 0 {
-			fish.X = screenWidth + fish.HalfWidth - 1
+			fish.X = fish.game.screenWidth + fish.HalfWidth - 1
 		} else {
 			fish.X = 1 - fish.HalfWidth
 		}
@@ -419,19 +420,19 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 		return
 	}
 	driveX, driveY = 0, 0
-	if ebiten.IsKeyPressed(ebiten.KeyW) || ebiten.IsKeyPressed(ebiten.KeyArrowUp) {
+	if isAnyOfKeysPressed(false, ebiten.KeyW, ebiten.KeyArrowUp) {
 		driveY -= 1
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyS) || ebiten.IsKeyPressed(ebiten.KeyArrowDown) {
+	if isAnyOfKeysPressed(false, ebiten.KeyS, ebiten.KeyArrowDown) {
 		driveY += 1
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyA) || ebiten.IsKeyPressed(ebiten.KeyArrowLeft) {
+	if isAnyOfKeysPressed(false, ebiten.KeyA, ebiten.KeyArrowLeft) {
 		driveX -= 1
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyD) || ebiten.IsKeyPressed(ebiten.KeyArrowRight) {
+	if isAnyOfKeysPressed(false, ebiten.KeyD, ebiten.KeyArrowRight) {
 		driveX += 1
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeySpace) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) {
+	if isAnyOfKeysPressed(true, ebiten.KeySpace) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) {
 		fish.SwitchPlane()
 	}
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButton0) {
@@ -447,13 +448,13 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 	}
 	if fish.game.options.debugEnabled {
 
-		if ebiten.IsKeyPressed(ebiten.KeyPageUp) {
+		if isAnyOfKeysPressed(false, ebiten.KeyPageUp) {
 			fish.SetSize(fish.Size + 1)
 		}
-		if ebiten.IsKeyPressed(ebiten.KeyPageDown) {
+		if isAnyOfKeysPressed(false, ebiten.KeyPageDown) {
 			fish.SetSize(fish.Size - 1)
 		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyDelete) {
+		if isAnyOfKeysPressed(false, ebiten.KeyDelete) {
 			fish.Die()
 		}
 	}
@@ -486,8 +487,8 @@ func (fish *PlayerFish) Reset() {
 	fish.Dead = false
 	fish.Plane = 0
 	fish.SetSize(10)
-	fish.X = float64(screenWidth) / 2
-	fish.Y = float64(screenHeight) / 2
+	fish.X = float64(fish.game.screenWidth) / 2
+	fish.Y = float64(fish.game.screenHeight) / 2
 	fish.SpeedX, fish.SpeedY = 0, 0
 	fish.FrictionCoefficient = 1
 	fish.GraphUpdated = true
@@ -531,6 +532,9 @@ func (fish *Fish) SwitchPlane() {
 }
 
 type Game struct {
+	screen          *ebiten.Image
+	screenHeight    float64
+	screenWidth     float64
 	options         GameOptions
 	fishStaticArray [50]Fish
 	fish            []Fish
@@ -543,11 +547,13 @@ type Game struct {
 	mostEaten       float64
 	eaten           float64
 	gameState       int
-	textSource      *text.GoTextFaceSource
-	logoSource      *text.GoTextFaceSource
+	plainFontSource *text.GoTextFaceSource
+	fancyFontSource *text.GoTextFaceSource
 	textColor       color.Color
 	paused          bool
 	randomQuote     string
+	fontSizes       map[string]float64
+	menuHidden      bool
 }
 
 type GameOptions struct {
@@ -562,6 +568,9 @@ type GameOptions struct {
 func NewGame() *Game {
 	g := &Game{}
 	g.SetDefaultOptions()
+	g.screenWidth, g.screenHeight = screenWidth, screenHeight
+	g.fontSizes = make(map[string]float64)
+	g.setFontsSizes()
 	g.preloadedImages = map[string]image.Image{
 		"player":   preloadImage(playerImage),
 		"bass":     preloadImage(bassImage),
@@ -570,14 +579,13 @@ func NewGame() *Game {
 		"goldfish": preloadImage(goldfishImage),
 		"jelly":    preloadImage(jellyImage),
 	}
-	g.GetBackgroundColor(screenHeight / 2)
+	g.GetBackgroundColor(g.screenHeight / 2)
 
 	g.textColor = color.RGBA{255, 128, 0, 255}
-	g.textSource = LoadFont(fixedsys)
-	g.logoSource = LoadFont(aquawow)
+	g.plainFontSource = LoadFont(fixedsys)
+	g.fancyFontSource = LoadFont(aquawow)
 	g.playerFish.Init(g)
-	g.Start()
-	g.gameState = gameMenu
+	g.GoToMenu(true)
 	return g
 }
 
@@ -601,6 +609,10 @@ func (g *Game) Update() error {
 		return g.GameOverCycle()
 	case gameMenu:
 		return g.MenuCycle()
+	case gameVictory:
+		return g.VictoryCycle()
+	case gameOptionsMenu:
+		return g.OptionsCycle()
 	}
 	return nil
 
@@ -615,9 +627,15 @@ func (g *Game) GameCycle() error {
 	}
 	if !g.playerFish.Dead {
 		g.GetBackgroundColor(g.playerFish.Y)
-		if inpututil.IsKeyJustPressed(ebiten.KeyP) || inpututil.IsKeyJustPressed(ebiten.KeyPause) || inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-			g.gameState = gameMenu
-			//g.paused = !g.paused
+		if isAnyOfKeysPressed(true, ebiten.KeyP, ebiten.KeyPause, ebiten.KeyEnter) {
+			g.paused = !g.paused
+		}
+		if isAnyOfKeysPressed(true, ebiten.KeyEscape) {
+			if g.paused {
+				g.GoToMenu(false)
+			} else {
+				g.paused = true
+			}
 		}
 	}
 
@@ -625,7 +643,7 @@ func (g *Game) GameCycle() error {
 }
 
 func (g *Game) GameOverCycle() error {
-	if inpututil.IsKeyJustPressed(ebiten.KeySpace) || inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) {
+	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) {
 		g.Restart()
 	}
 	return nil
@@ -636,8 +654,11 @@ func (g *Game) MenuCycle() error {
 		g.fish[i].Move()
 	}
 
-	if inpututil.IsKeyJustPressed(ebiten.KeySpace) || inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter) {
 		g.Start()
+	}
+	if isAnyOfKeysPressed(true, ebiten.KeyH) {
+		g.menuHidden = !g.menuHidden
 	}
 	return nil
 }
@@ -647,122 +668,130 @@ func (g *Game) OptionsCycle() error {
 }
 
 func (g *Game) VictoryCycle() error {
+	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEscape, ebiten.KeyEnter) {
+		g.GoToMenu(false)
+	}
 	return nil
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	g.screen = screen
 	screen.Fill(g.background)
 
 	switch g.gameState {
 	case gameRunning:
-		g.DrawGame(screen)
+		g.DrawGame()
 	case gamePaused:
-		g.DrawGame(screen)
+		g.DrawGame()
 	case gameOver:
-		g.DrawGameOver(screen)
+		g.DrawGameOver()
 	case gameMenu:
-		g.DrawMenu(screen)
+		g.DrawMenu()
 	case gameOptionsMenu:
-		g.DrawOptions(screen)
+		g.DrawOptions()
 	case gameVictory:
-		g.DrawVictory(screen)
+		g.DrawVictory()
 	}
 }
 
-func (g *Game) DrawGame(screen *ebiten.Image) {
+func (g *Game) DrawGame() {
 	if !g.playerFish.Dead {
-		g.DrawPlanesRecursive(screen, g.fish, g.totalFishCount, g.options.planeCount-1)
+		g.DrawAllNpcFish()
 	}
-	g.playerFish.Draw(screen)
+	g.playerFish.Draw()
 	if g.options.debugEnabled {
-		ebitenutil.DebugPrint(screen, fmt.Sprintf("Fish position (X Y): %0.2f %0.2f Fish Speed (X Y): %0.5f %0.5f Size: %0.0f",
+		ebitenutil.DebugPrint(g.screen, fmt.Sprintf("Fish position (X Y): %0.2f %0.2f Fish Speed (X Y): %0.5f %0.5f Size: %0.0f",
 			g.playerFish.X, g.playerFish.Y, g.playerFish.SpeedX, g.playerFish.SpeedY, g.playerFish.Size))
 	}
 
 }
 
-func (g *Game) DrawGameOver(screen *ebiten.Image) {
+func (g *Game) DrawGameOver() {
 
 	op := &text.DrawOptions{}
-	op.ColorScale.ScaleWithColor(g.textColor)
-	_, medFontSize, smallFontSize := getFontSizes(screenHeight)
-	op.GeoM.Translate(200, 200)
-	text.Draw(screen, fmt.Sprintf("FISH EATEN: %0.0f", g.eaten), &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   medFontSize,
-	}, op)
-	op.GeoM.Translate(500, 0)
-	text.Draw(screen, fmt.Sprintf("SCORE: %0.0f", g.score), &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   medFontSize,
-	}, op)
-	op.GeoM.Translate(-500, 100)
-	text.Draw(screen, g.randomQuote, &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   smallFontSize,
-	}, op)
-	op.GeoM.Translate(0, 100)
-	text.Draw(screen, fmt.Sprintf("BEST EATING SPREE: %0.0f", g.mostEaten), &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   smallFontSize,
-	}, op)
-	op.GeoM.Translate(500, 0)
-	text.Draw(screen, fmt.Sprintf("HI-SCORE: %0.0f", g.highScore), &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   smallFontSize,
-	}, op)
+
+	op.GeoM.Translate(0.5*g.screenWidth-g.font("small")*float64(len(g.randomQuote))/3.6, 0.4*g.screenHeight)
+	text.Draw(g.screen, g.randomQuote, g.GetFontFace("small", true), op)
+	g.DrawHiScores()
+	g.DrawScores()
 }
 
-func (g *Game) DrawMenu(screen *ebiten.Image) {
+func (g *Game) DrawMenu() {
 
-	g.DrawPlanesRecursive(screen, g.fish, g.totalFishCount, g.options.planeCount-1)
-	op, logoOp := &text.DrawOptions{}, &text.DrawOptions{}
-	op.ColorScale.ScaleWithColor(g.textColor)
-	logoOp.ColorScale.ScaleWithColor(color.White)
-	bigFontsize, medFontSize, _ := getFontSizes(screenHeight)
+	g.DrawAllNpcFish()
 
-	logoOp.GeoM.Translate(400, 200)
-	text.Draw(screen, title, &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   bigFontsize,
-	}, logoOp)
+	op, logoOp, footerOp := &text.DrawOptions{}, &text.DrawOptions{}, &text.DrawOptions{}
+	footerOp.GeoM.Translate(0, 0.95*g.screenHeight)
+	plainFace := g.GetFontFace("medium", false)
+	if !g.menuHidden {
+		g.DrawHiScores()
+		logoFace := g.GetFontFace("logo", true)
+		face := g.GetFontFace("big", true)
+		logoOp.GeoM.Translate(0.3*g.screenWidth, 0.15*g.screenHeight)
+		text.Draw(g.screen, title, logoFace, logoOp)
 
-	op.GeoM.Translate(-200, 100)
-	text.Draw(screen, fmt.Sprintf("BEST EATING SPREE: %0.0f", g.mostEaten), &text.GoTextFace{
-		Source: g.textSource,
-		Size:   medFontSize,
-	}, op)
-	op.GeoM.Translate(500, 0)
-	text.Draw(screen, fmt.Sprintf("HI_SCORE: %0.0f", g.highScore), &text.GoTextFace{
-		Source: g.textSource,
-		Size:   medFontSize,
-	}, op)
-	op.GeoM.Translate(-200, 200)
-	text.Draw(screen, "PLAY", &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   bigFontsize,
-	}, op)
-	op.GeoM.Translate(0, 200)
-	text.Draw(screen, "OPTIONS", &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   bigFontsize,
-	}, op)
-	op.GeoM.Translate(0, 200)
-	text.Draw(screen, "QUIT", &text.GoTextFace{
-		Source: g.logoSource,
-		Size:   bigFontsize,
-	}, op)
-}
+		op.GeoM.Translate(0.2*g.screenWidth, 0.4*g.screenHeight)
+		text.Draw(g.screen, "PLAY", face, op)
+		op.GeoM.Translate(0, 0.2*g.screenHeight)
+		text.Draw(g.screen, "OPTIONS", face, op)
+		op.GeoM.Translate(0, 0.2*g.screenHeight)
+		text.Draw(g.screen, "QUIT", face, op)
 
-func (g *Game) DrawOptions(screen *ebiten.Image) {
+		text.Draw(g.screen, "<", plainFace, footerOp)
+		footerOp.GeoM.Translate(0.8*g.screenWidth, 0)
+		text.Draw(g.screen, "by Dmitriy Lisovin (2024)", g.GetFontFace("small", false), footerOp)
+
+	} else {
+		text.Draw(g.screen, ">", plainFace, footerOp)
+	}
 
 }
 
-func (g *Game) DrawVictory(screen *ebiten.Image) {
+func (g *Game) DrawOptions() {
 
 }
 
-func (g *Game) DrawPlanesRecursive(screen *ebiten.Image, fishes []Fish, count, plane int) {
+func (g *Game) DrawVictory() {
+	g.DrawAllNpcFish()
+	g.playerFish.Draw()
+	op := &text.DrawOptions{}
+	face := &text.GoTextFace{
+		Source: g.fancyFontSource,
+		Size:   g.font("medium"),
+	}
+	op.GeoM.Translate(0.375*g.screenWidth, 0.2*g.screenHeight)
+	text.Draw(g.screen, "CONGRATULATIONS!", face, op)
+	op.GeoM.Translate(-0.225*g.screenWidth, 0.1*g.screenHeight)
+	text.Draw(g.screen, "You have become the biggest fish in the ocean!", face, op)
+	op.GeoM.Translate(0.05*g.screenWidth, 0.1*g.screenHeight)
+	text.Draw(g.screen, "Now you can eat anyone with impunity.", face, op)
+	g.DrawHiScores()
+	g.DrawScores()
+}
+
+func (g *Game) DrawHiScores() {
+	op := &text.DrawOptions{}
+	face := g.GetFontFace("medium", true)
+	op.GeoM.Translate(0.1*g.screenWidth, 0.02*g.screenHeight)
+	text.Draw(g.screen, fmt.Sprintf("BEST EATING SPREE: %0.0f", g.mostEaten), face, op)
+	op.GeoM.Translate(0.6*g.screenWidth, 0)
+	text.Draw(g.screen, fmt.Sprintf("HI-SCORE: %0.0f", g.highScore), face, op)
+}
+
+func (g *Game) DrawScores() {
+	op := &text.DrawOptions{}
+	face := g.GetFontFace("medium", true)
+	op.GeoM.Translate(0.4*g.screenWidth, 0.5*g.screenHeight)
+	text.Draw(g.screen, fmt.Sprintf("FISH EATEN: %0.0f", g.eaten), face, op)
+	op.GeoM.Translate(0.035*g.screenWidth, 0.1*g.screenHeight)
+	text.Draw(g.screen, fmt.Sprintf("SCORE: %0.0f", g.score), face, op)
+}
+
+func (g *Game) DrawAllNpcFish() {
+	g.DrawPlanesRecursive(g.fish, g.totalFishCount, g.options.planeCount-1)
+}
+
+func (g *Game) DrawPlanesRecursive(fishes []Fish, count, plane int) {
 	if plane < 0 || count <= 0 {
 		return
 	}
@@ -771,13 +800,13 @@ func (g *Game) DrawPlanesRecursive(screen *ebiten.Image, fishes []Fish, count, p
 	for i := 0; i < count; i++ {
 		switch {
 		case int(fishes[i].Plane) == plane:
-			fishes[i].Draw(screen)
+			fishes[i].Draw()
 		case int(fishes[i].Plane) < plane:
 			otherPlaneFishes = append(otherPlaneFishes, fishes[i])
 			otherCount++
 		}
 	}
-	g.DrawPlanesRecursive(screen, otherPlaneFishes, otherCount, plane-1)
+	g.DrawPlanesRecursive(otherPlaneFishes, otherCount, plane-1)
 }
 
 func (g *Game) GameOver() {
@@ -787,12 +816,31 @@ func (g *Game) GameOver() {
 }
 func (g *Game) End(gameState int) {
 	g.gameState = gameState
-	g.highScore = math.Max(g.highScore, g.score)
-	g.mostEaten = math.Max(g.eaten, g.mostEaten)
 }
 
 func (g *Game) Win() {
-	g.End(gameOver)
+
+	for i, _ := range g.fish {
+		if g.fish[i].Plane == 0 {
+			g.fish[i].SwitchPlane()
+		}
+	}
+	if g.playerFish.Plane == 0 {
+		g.playerFish.SwitchPlane()
+	}
+	g.End(gameVictory)
+}
+
+func (g *Game) GoToMenu(generate bool) {
+	g.gameState = gameMenu
+	g.menuHidden = false
+	if generate {
+		g.GenerateFish()
+		for i, _ := range g.fish {
+			g.fish[i].Randomize()
+		}
+	}
+
 }
 
 func (g *Game) Restart() {
@@ -807,6 +855,7 @@ func (g *Game) Restart() {
 func (g *Game) Start() {
 	g.GenerateFish()
 	g.Restart()
+	g.paused = false
 }
 
 func (g *Game) GenerateFish() {
@@ -830,7 +879,7 @@ func main() {
 }
 
 func (g *Game) GetBackgroundColor(y float64) {
-	max := float64(screenHeight)
+	max := float64(g.screenHeight)
 	r, gr, b := getColorComponentByDepth(y, max/3, 128), getColorComponentByDepth(y, max/2, 255), getColorComponentByDepth(y, max, 192)
 	g.background = color.RGBA{uint8(r), uint8(gr), uint8(b), 128}
 	g.textColor = color.RGBA{uint8(255.0 - r), uint8(255.0 - gr), uint8(255.0 - b), 192}
@@ -857,12 +906,37 @@ func preloadImage(img []byte) image.Image {
 	return m
 }
 
-func getFontSizes(scrHeight int) (big, medium, small float64) {
-	h := float64(scrHeight)
-	big = 0.1 * h
-	medium = 0.05 * h
-	small = 0.03 * h
+func (g *Game) setFontsSizes() {
+	clear(g.fontSizes)
+	g.fontSizes["logo"] = 0.15 * g.screenHeight
+	g.fontSizes["big"] = 0.1 * g.screenHeight
+	g.fontSizes["medium"] = 0.05 * g.screenHeight
+	g.fontSizes["small"] = 0.03 * g.screenHeight
+
 	return
+}
+
+func (g *Game) font(i string) float64 {
+	return g.fontSizes[i]
+}
+
+func (g *Game) GetFontFace(sizeIndex string, fancy bool) (face *text.GoTextFace) {
+	face = &text.GoTextFace{
+		Source: g.plainFontSource,
+		Size:   g.font(sizeIndex),
+	}
+	if fancy {
+		face.Source = g.fancyFontSource
+	}
+	return
+}
+
+func (g *Game) UpdateScore(targetSize float64) {
+	g.eaten++
+	g.score += targetSize
+	g.highScore = math.Max(g.highScore, g.score)
+	g.mostEaten = math.Max(g.eaten, g.mostEaten)
+
 }
 
 func LoadFont(source []byte) *text.GoTextFaceSource {
@@ -871,4 +945,19 @@ func LoadFont(source []byte) *text.GoTextFaceSource {
 		log.Fatal(err)
 	}
 	return s
+}
+
+func isAnyOfKeysPressed(just bool, keys ...ebiten.Key) bool {
+	var method func(key ebiten.Key) bool
+	if just {
+		method = inpututil.IsKeyJustPressed
+	} else {
+		method = ebiten.IsKeyPressed
+	}
+	for _, key := range keys {
+		if method(key) {
+			return true
+		}
+	}
+	return false
 }
