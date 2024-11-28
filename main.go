@@ -52,6 +52,8 @@ var (
 		"It happens.",
 		"Too greedy.",
 		"You just went belly up.",
+		"Well, at least give them an indigestion.",
+		"You still have two ways out.",
 		"Some fish can swallow prey 3 times their own size. Alas, you're not one of those.",
 		"There's always a bigger fish.",
 		"Don't bite more than you can swallow.",
@@ -69,6 +71,7 @@ var (
 		"If you want more - or less - challenge, go to Options and play around.",
 		"The bigger the fish, the better the score, but don't get too greedy.",
 		"If the fish isn't afraid of you, that may be for a reason.",
+		"GULP",
 	}
 )
 
@@ -531,6 +534,37 @@ func (fish *Fish) SwitchPlane() {
 	fish.ResizeSprite()
 }
 
+type MenuItem struct {
+	title    string
+	x, y, h  float64
+	selector int
+	active   bool
+	fontFace *text.GoTextFace
+	values   []float64
+	titles   []string
+}
+
+func (m *MenuItem) Draw(screen *ebiten.Image) {
+
+	itemText := m.title
+	if len(m.titles) > 0 {
+		itemText += ": " + m.titles[m.selector]
+	}
+	op := &text.DrawOptions{}
+	if m.active {
+		op.ColorScale.ScaleWithColor(color.RGBA{255, 128, 0, 255})
+	}
+	op.GeoM.Translate(m.x, m.y+(m.h/2)-(m.fontFace.Size/2))
+	text.Draw(screen, itemText, m.fontFace, op)
+}
+
+func (m *MenuItem) IsTriggered() bool {
+	_, y := ebiten.CursorPosition()
+	fy := float64(y)
+	m.active = fy >= m.y && fy < m.y+m.h
+	return m.active && (inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter))
+}
+
 type Game struct {
 	screen          *ebiten.Image
 	screenHeight    float64
@@ -554,6 +588,8 @@ type Game struct {
 	randomQuote     string
 	fontSizes       map[string]float64
 	menuHidden      bool
+	mainMenu        []MenuItem
+	optionsMenu     []MenuItem
 }
 
 type GameOptions struct {
@@ -585,15 +621,36 @@ func NewGame() *Game {
 	g.plainFontSource = LoadFont(fixedsys)
 	g.fancyFontSource = LoadFont(aquawow)
 	g.playerFish.Init(g)
+	g.CreateMenus()
 	g.GoToMenu(true)
 	return g
+}
+
+func (g *Game) CreateMenus() {
+	face := g.GetFontFace("big", true)
+	x := 0.2 * g.screenWidth
+	y := 0.35 * g.screenHeight
+	h := 0.2 * g.screenHeight
+	mainMenuItems := []string{
+		"PLAY", "Options", "Quit",
+	}
+	for _, title := range mainMenuItems {
+		g.mainMenu = append(g.mainMenu, MenuItem{
+			title:    title,
+			x:        x,
+			y:        y,
+			h:        h,
+			fontFace: face,
+		})
+		y += h
+	}
 }
 
 func (g *Game) SetDefaultOptions() {
 	g.options = GameOptions{
 		debugEnabled:       true,
 		planeCount:         2,
-		fishPerPlane:       8,
+		fishPerPlane:       10,
 		fishSpeedModifier:  1.0,
 		playerAcceleration: 0.5,
 		playerDeceleration: -0.025,
@@ -653,9 +710,20 @@ func (g *Game) MenuCycle() error {
 	for i := 0; i < g.totalFishCount; i++ {
 		g.fish[i].Move()
 	}
+	for i, _ := range g.mainMenu {
+		if g.mainMenu[i].IsTriggered() {
+			switch i {
+			case 0:
+				g.Start()
+			case 1:
+				g.gameState = gameOptionsMenu
+			case 2:
+			}
+		}
+	}
 
 	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter) {
-		g.Start()
+
 	}
 	if isAnyOfKeysPressed(true, ebiten.KeyH) {
 		g.menuHidden = !g.menuHidden
@@ -720,22 +788,18 @@ func (g *Game) DrawMenu() {
 
 	g.DrawAllNpcFish()
 
-	op, logoOp, footerOp := &text.DrawOptions{}, &text.DrawOptions{}, &text.DrawOptions{}
+	logoOp, footerOp := &text.DrawOptions{}, &text.DrawOptions{}
 	footerOp.GeoM.Translate(0, 0.95*g.screenHeight)
 	plainFace := g.GetFontFace("medium", false)
 	if !g.menuHidden {
 		g.DrawHiScores()
 		logoFace := g.GetFontFace("logo", true)
-		face := g.GetFontFace("big", true)
 		logoOp.GeoM.Translate(0.3*g.screenWidth, 0.15*g.screenHeight)
 		text.Draw(g.screen, title, logoFace, logoOp)
 
-		op.GeoM.Translate(0.2*g.screenWidth, 0.4*g.screenHeight)
-		text.Draw(g.screen, "PLAY", face, op)
-		op.GeoM.Translate(0, 0.2*g.screenHeight)
-		text.Draw(g.screen, "OPTIONS", face, op)
-		op.GeoM.Translate(0, 0.2*g.screenHeight)
-		text.Draw(g.screen, "QUIT", face, op)
+		for _, menuItem := range g.mainMenu {
+			menuItem.Draw(g.screen)
+		}
 
 		text.Draw(g.screen, "<", plainFace, footerOp)
 		footerOp.GeoM.Translate(0.8*g.screenWidth, 0)
@@ -882,7 +946,6 @@ func (g *Game) GetBackgroundColor(y float64) {
 	max := float64(g.screenHeight)
 	r, gr, b := getColorComponentByDepth(y, max/3, 128), getColorComponentByDepth(y, max/2, 255), getColorComponentByDepth(y, max, 192)
 	g.background = color.RGBA{uint8(r), uint8(gr), uint8(b), 128}
-	g.textColor = color.RGBA{uint8(255.0 - r), uint8(255.0 - gr), uint8(255.0 - b), 192}
 	return
 }
 
