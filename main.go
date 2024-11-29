@@ -388,8 +388,8 @@ func (fish *Fish) ProximityAlert(attacker *PlayerFish) {
 func (fish *Fish) Randomize() {
 	fish.Dead = false
 	fish.Cooldown = 0
-	fish.Plane = float64(rand.Intn(maxPlanes))
-	fish.SetSize(float64(rand.Intn(40) + 5))
+	fish.Plane = float64(rand.Intn(int(fish.game.options.planeCount)))
+	fish.SetSize(float64(rand.Intn(int(fish.game.options.fishSizeCap)-5) + 5))
 	fish.SpeedX = float64(rand.Intn(3) + 1)
 	fish.SpeedY = float64(rand.Intn(3) - 1)
 	reverse := rand.Intn(2)
@@ -413,6 +413,7 @@ func (fish *Fish) Randomize() {
 			fish.X = 1 - fish.HalfWidth
 		}
 	}
+	fish.SpeedX, fish.SpeedY = fish.SpeedX*fish.game.options.fishSpeedModifier, fish.SpeedY*fish.game.options.fishSpeedModifier
 	fish.FacingLeft = fish.SpeedX < 0
 	fish.GraphUpdated = true
 
@@ -439,15 +440,14 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 		fish.SwitchPlane()
 	}
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButton0) {
-		d := 10.0
 		jx, jy := ebiten.CursorPosition()
 		driveX, driveY = float64(jx)-fish.X, float64(jy)-fish.Y
-		if math.Abs(driveX) < d {
-			driveX = 0
-		}
-		if math.Abs(driveY) < d {
-			driveY = 0
-		}
+		// if math.Abs(driveX) < fish.HalfWidth {
+		// 	driveX = 0
+		// }
+		// if math.Abs(driveY) < fish.HalfHeight {
+		// 	driveY = 0
+		// }
 	}
 	if fish.game.options.debugEnabled {
 
@@ -530,7 +530,7 @@ func (fish *Fish) Swim(driveX, driveY float64) {
 }
 
 func (fish *Fish) SwitchPlane() {
-	fish.Plane = math.Mod(fish.Plane+1, maxPlanes)
+	fish.Plane = math.Mod(fish.Plane+1, fish.game.options.planeCount)
 	fish.ResizeSprite()
 }
 
@@ -538,31 +538,55 @@ type MenuItem struct {
 	title    string
 	x, y, h  float64
 	selector int
-	active   bool
 	fontFace *text.GoTextFace
 	values   []float64
 	titles   []string
 }
 
-func (m *MenuItem) Draw(screen *ebiten.Image) {
+func (m *MenuItem) Draw(screen *ebiten.Image, active bool) {
 
 	itemText := m.title
 	if len(m.titles) > 0 {
 		itemText += ": " + m.titles[m.selector]
 	}
 	op := &text.DrawOptions{}
-	if m.active {
+	if active {
 		op.ColorScale.ScaleWithColor(color.RGBA{255, 128, 0, 255})
 	}
 	op.GeoM.Translate(m.x, m.y+(m.h/2)-(m.fontFace.Size/2))
 	text.Draw(screen, itemText, m.fontFace, op)
 }
 
-func (m *MenuItem) IsTriggered() bool {
+func (m *MenuItem) DetectHover() bool {
 	_, y := ebiten.CursorPosition()
 	fy := float64(y)
-	m.active = fy >= m.y && fy < m.y+m.h
-	return m.active && (inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter))
+	return fy >= m.y && fy < m.y+m.h
+}
+
+func (m *MenuItem) CycleRight() {
+	m.selector = (m.selector + 1) % len(m.values)
+}
+
+func (m *MenuItem) ShiftRight() bool {
+	s := int(math.Min(float64(m.selector+1), float64(len(m.values)-1)))
+	if m.selector == s {
+		return false
+	}
+	m.selector = s
+	return true
+}
+
+func (m *MenuItem) ShiftLeft() bool {
+	s := int(math.Max(float64(m.selector-1), 0))
+	if m.selector == s {
+		return false
+	}
+	m.selector = s
+	return true
+}
+
+func (m *MenuItem) GetValue() float64 {
+	return m.values[m.selector]
 }
 
 type Game struct {
@@ -590,13 +614,17 @@ type Game struct {
 	menuHidden      bool
 	mainMenu        []MenuItem
 	optionsMenu     []MenuItem
+	activeMenuIndex int
+	prevCurX        int
+	prevCurY        int
 }
 
 type GameOptions struct {
 	debugEnabled       bool
-	planeCount         int
-	fishPerPlane       int
+	planeCount         float64
+	fishPerPlane       float64
 	fishSpeedModifier  float64
+	fishSizeCap        float64
 	playerAcceleration float64
 	playerDeceleration float64
 }
@@ -644,18 +672,92 @@ func (g *Game) CreateMenus() {
 		})
 		y += h
 	}
+	g.mainMenu = append(g.mainMenu, MenuItem{
+		title:    title,
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: face,
+	})
+	x = 0.2 * g.screenWidth
+	y = 0.075 * g.screenHeight
+	h = 0.15 * g.screenHeight
+	g.optionsMenu = append(g.optionsMenu, MenuItem{
+		title:    "Game planes",
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: face,
+		selector: 1,
+		titles:   []string{"1", "2"},
+		values:   []float64{1, 2},
+	})
+	y += h
+	g.optionsMenu = append(g.optionsMenu, MenuItem{
+		title:    "Fish amount",
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: face,
+		selector: 2,
+		titles:   []string{"scarce", "less", "normal", "more", "swarm"},
+		values:   []float64{5, 10, 15, 20, 25},
+	})
+	y += h
+	g.optionsMenu = append(g.optionsMenu, MenuItem{
+		title: "Fish speed",
+
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: face,
+		selector: 1,
+		titles:   []string{"slow", "normal", "fast", "frenzy"},
+		values:   []float64{0.5, 1, 1.5, 2},
+	})
+	y += h
+	g.optionsMenu = append(g.optionsMenu, MenuItem{
+		title:    "Fish max size",
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: face,
+		selector: 0,
+		titles:   []string{"big", "bigger", "biggest"},
+		values:   []float64{45, 60, 75},
+	})
+	y += h
+	g.optionsMenu = append(g.optionsMenu, MenuItem{
+		title:    "Back",
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: face,
+	})
 }
 
 func (g *Game) SetDefaultOptions() {
 	g.options = GameOptions{
 		debugEnabled:       true,
 		planeCount:         2,
-		fishPerPlane:       10,
+		fishPerPlane:       15,
+		fishSizeCap:        45,
 		fishSpeedModifier:  1.0,
 		playerAcceleration: 0.5,
 		playerDeceleration: -0.025,
 	}
 
+}
+
+func (g *Game) ApplyOptions() {
+	g.options.planeCount = g.optionsMenu[0].GetValue()
+	g.options.fishPerPlane = g.optionsMenu[1].GetValue()
+	g.options.fishSpeedModifier = g.optionsMenu[2].GetValue()
+	g.options.fishSizeCap = g.optionsMenu[3].GetValue()
+	g.GenerateFish()
+	for i, _ := range g.fish {
+		g.fish[i].Randomize()
+	}
 }
 
 func (g *Game) Update() error {
@@ -707,23 +809,30 @@ func (g *Game) GameOverCycle() error {
 }
 
 func (g *Game) MenuCycle() error {
-	for i := 0; i < g.totalFishCount; i++ {
+	for i, _ := range g.fish {
 		g.fish[i].Move()
 	}
-	for i, _ := range g.mainMenu {
-		if g.mainMenu[i].IsTriggered() {
-			switch i {
-			case 0:
-				g.Start()
-			case 1:
-				g.gameState = gameOptionsMenu
-			case 2:
+	if isAnyOfKeysPressed(true, ebiten.KeyArrowDown, ebiten.KeyS) {
+		g.activeMenuIndex = int(math.Min(float64(g.activeMenuIndex+1), float64(len(g.mainMenu)-1)))
+	}
+	if isAnyOfKeysPressed(true, ebiten.KeyArrowUp, ebiten.KeyW) {
+		g.activeMenuIndex = int(math.Max(float64(g.activeMenuIndex-1), 0))
+	}
+	if g.HasMouseMoved() {
+		for i, _ := range g.mainMenu {
+			if g.mainMenu[i].DetectHover() {
+				g.activeMenuIndex = i
 			}
 		}
 	}
 
-	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter) {
-
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeyEnter, ebiten.KeySpace) {
+		switch g.activeMenuIndex {
+		case 0:
+			g.Start()
+		case 1:
+			g.GoToOptions()
+		}
 	}
 	if isAnyOfKeysPressed(true, ebiten.KeyH) {
 		g.menuHidden = !g.menuHidden
@@ -732,6 +841,47 @@ func (g *Game) MenuCycle() error {
 }
 
 func (g *Game) OptionsCycle() error {
+	for i, _ := range g.fish {
+		g.fish[i].Move()
+	}
+	if isAnyOfKeysPressed(true, ebiten.KeyEscape) {
+		g.GoToMenu(true)
+	}
+	if isAnyOfKeysPressed(true, ebiten.KeyArrowDown, ebiten.KeyS) {
+		g.activeMenuIndex = int(math.Min(float64(g.activeMenuIndex+1), float64(len(g.optionsMenu)-1)))
+	}
+	if isAnyOfKeysPressed(true, ebiten.KeyArrowUp, ebiten.KeyW) {
+		g.activeMenuIndex = int(math.Max(float64(g.activeMenuIndex-1), 0))
+	}
+
+	if g.HasMouseMoved() {
+		for i, _ := range g.optionsMenu {
+			if g.optionsMenu[i].DetectHover() {
+				g.activeMenuIndex = i
+			}
+		}
+	}
+	if g.activeMenuIndex != 4 {
+		if isAnyOfKeysPressed(true, ebiten.KeyD, ebiten.KeyArrowRight) {
+			if g.optionsMenu[g.activeMenuIndex].ShiftRight() {
+				g.ApplyOptions()
+			}
+		}
+		if isAnyOfKeysPressed(true, ebiten.KeyA, ebiten.KeyArrowLeft) {
+			if g.optionsMenu[g.activeMenuIndex].ShiftLeft() {
+				g.ApplyOptions()
+			}
+		}
+	}
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeyEnter, ebiten.KeySpace) {
+		switch {
+		case g.activeMenuIndex < 4:
+			g.optionsMenu[g.activeMenuIndex].CycleRight()
+			g.ApplyOptions()
+		case g.activeMenuIndex == 4:
+			g.GoToMenu(false)
+		}
+	}
 	return nil
 }
 
@@ -740,6 +890,15 @@ func (g *Game) VictoryCycle() error {
 		g.GoToMenu(false)
 	}
 	return nil
+}
+
+func (g *Game) HasMouseMoved() (hasMoved bool) {
+	x, y := ebiten.CursorPosition()
+	if x != g.prevCurX || y != g.prevCurY {
+		hasMoved = true
+	}
+	g.prevCurX, g.prevCurY = x, y
+	return
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
@@ -797,8 +956,8 @@ func (g *Game) DrawMenu() {
 		logoOp.GeoM.Translate(0.3*g.screenWidth, 0.15*g.screenHeight)
 		text.Draw(g.screen, title, logoFace, logoOp)
 
-		for _, menuItem := range g.mainMenu {
-			menuItem.Draw(g.screen)
+		for i, menuItem := range g.mainMenu {
+			menuItem.Draw(g.screen, i == g.activeMenuIndex)
 		}
 
 		text.Draw(g.screen, "<", plainFace, footerOp)
@@ -812,6 +971,10 @@ func (g *Game) DrawMenu() {
 }
 
 func (g *Game) DrawOptions() {
+	g.DrawAllNpcFish()
+	for i, menuItem := range g.optionsMenu {
+		menuItem.Draw(g.screen, i == g.activeMenuIndex)
+	}
 
 }
 
@@ -852,7 +1015,7 @@ func (g *Game) DrawScores() {
 }
 
 func (g *Game) DrawAllNpcFish() {
-	g.DrawPlanesRecursive(g.fish, g.totalFishCount, g.options.planeCount-1)
+	g.DrawPlanesRecursive(g.fish, g.totalFishCount, int(g.options.planeCount-1))
 }
 
 func (g *Game) DrawPlanesRecursive(fishes []Fish, count, plane int) {
@@ -898,12 +1061,19 @@ func (g *Game) Win() {
 func (g *Game) GoToMenu(generate bool) {
 	g.gameState = gameMenu
 	g.menuHidden = false
+	g.activeMenuIndex = 0
 	if generate {
 		g.GenerateFish()
 		for i, _ := range g.fish {
 			g.fish[i].Randomize()
 		}
 	}
+
+}
+
+func (g *Game) GoToOptions() {
+	g.gameState = gameOptionsMenu
+	g.activeMenuIndex = len(g.optionsMenu) - 1
 
 }
 
@@ -923,8 +1093,8 @@ func (g *Game) Start() {
 }
 
 func (g *Game) GenerateFish() {
-	g.totalFishCount = g.options.fishPerPlane * g.options.planeCount
-	g.fish = g.fishStaticArray[:g.totalFishCount]
+	g.totalFishCount = int(g.options.fishPerPlane * g.options.planeCount)
+	g.fish = g.fishStaticArray[0:g.totalFishCount]
 	for i := 0; i < g.totalFishCount; i++ {
 		g.fish[i].Init(g, getFishType(float64(i), float64(g.totalFishCount)))
 	}
