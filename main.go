@@ -8,6 +8,8 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"os"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2/colorm"
 
@@ -52,7 +54,7 @@ var (
 		"It happens.",
 		"Too greedy.",
 		"You just went belly up.",
-		"Well, at least give them an indigestion.",
+		"Well, at least give them indigestion.",
 		"You still have two ways out.",
 		"Some fish can swallow prey 3 times their own size. Alas, you're not one of those.",
 		"There's always a bigger fish.",
@@ -62,6 +64,8 @@ var (
 		"Eat the fish smaller than you, or be eaten by a bigger fish.",
 		"Use the keyboard or the mouse to move, whatever suits you best.",
 		"If you're cornered, press Spacebar or RMB to dodge to back or front plane.",
+		"Press H or click the little arrow in the main menu to hide it and just relax.",
+		"Press P or Enter to pause the game.",
 		"Sharks attack anything they see as a good meal, for better or worse.",
 		"Goldfish will try to escape with a dodge and a dash.",
 		"Pufferfish are easily scared and puff up to make themselves inedible... or more delicious.",
@@ -255,10 +259,12 @@ func (fish *PlayerFish) Hit(target *Fish) {
 	if !target.Dead && !fish.Dead && fish.Overlap(target) {
 		if fish.Size < target.Size {
 			fish.Die()
+			fish.game.VibrateGamepadHeavy()
 		} else {
 			if target.Die() {
 				fish.SetSize(fish.Size + 1)
 				fish.game.UpdateScore(target.Size)
+				fish.game.VibrateGamepadQuick()
 				if fish.HalfWidth*2 > fish.game.screenWidth {
 					fish.game.Win()
 				}
@@ -270,7 +276,9 @@ func (fish *PlayerFish) Hit(target *Fish) {
 
 func (fish *PlayerFish) Hunt(targets []Fish) {
 	for i, _ := range targets {
-		targets[i].ProximityAlert(fish)
+		if fish.game.options.fishReactionsEnabled {
+			targets[i].ProximityAlert(fish)
+		}
 		fish.Hit(&targets[i])
 	}
 }
@@ -424,6 +432,7 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 		return
 	}
 	driveX, driveY = 0, 0
+
 	if isAnyOfKeysPressed(false, ebiten.KeyW, ebiten.KeyArrowUp) {
 		driveY -= 1
 	}
@@ -436,7 +445,7 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 	if isAnyOfKeysPressed(false, ebiten.KeyD, ebiten.KeyArrowRight) {
 		driveX += 1
 	}
-	if isAnyOfKeysPressed(true, ebiten.KeySpace) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) {
+	if isAnyOfKeysPressed(true, ebiten.KeySpace) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) || fish.game.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightBottom) {
 		fish.SwitchPlane()
 	}
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButton0) {
@@ -461,7 +470,11 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 			fish.Die()
 		}
 	}
-	if driveAbs := math.Sqrt(math.Pow(driveX, 2) + math.Pow(driveY, 2)); driveAbs != 0 && driveAbs != 1 {
+
+	if ebiten.IsStandardGamepadLayoutAvailable(fish.game.gamepadId) {
+		driveX, driveY = ebiten.StandardGamepadAxisValue(fish.game.gamepadId, ebiten.StandardGamepadAxisLeftStickHorizontal), ebiten.StandardGamepadAxisValue(fish.game.gamepadId, ebiten.StandardGamepadAxisLeftStickVertical)
+	}
+	if driveAbs := math.Sqrt(math.Pow(driveX, 2) + math.Pow(driveY, 2)); driveAbs > 1 {
 		driveX, driveY = driveX/driveAbs, driveY/driveAbs
 	}
 	if driveX != 0 || driveY != 0 {
@@ -617,16 +630,18 @@ type Game struct {
 	activeMenuIndex int
 	prevCurX        int
 	prevCurY        int
+	gamepadId       ebiten.GamepadID
 }
 
 type GameOptions struct {
-	debugEnabled       bool
-	planeCount         float64
-	fishPerPlane       float64
-	fishSpeedModifier  float64
-	fishSizeCap        float64
-	playerAcceleration float64
-	playerDeceleration float64
+	debugEnabled         bool
+	planeCount           float64
+	fishPerPlane         float64
+	fishSpeedModifier    float64
+	fishSizeCap          float64
+	fishReactionsEnabled bool
+	playerAcceleration   float64
+	playerDeceleration   float64
 }
 
 func NewGame() *Game {
@@ -728,6 +743,17 @@ func (g *Game) CreateMenus() {
 	})
 	y += h
 	g.optionsMenu = append(g.optionsMenu, MenuItem{
+		title:    "Fish reactions",
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: face,
+		selector: 1,
+		titles:   []string{"off", "on"},
+		values:   []float64{0, 1},
+	})
+	y += h
+	g.optionsMenu = append(g.optionsMenu, MenuItem{
 		title:    "Back",
 		x:        x,
 		y:        y,
@@ -738,13 +764,14 @@ func (g *Game) CreateMenus() {
 
 func (g *Game) SetDefaultOptions() {
 	g.options = GameOptions{
-		debugEnabled:       true,
-		planeCount:         2,
-		fishPerPlane:       15,
-		fishSizeCap:        45,
-		fishSpeedModifier:  1.0,
-		playerAcceleration: 0.5,
-		playerDeceleration: -0.025,
+		debugEnabled:         true,
+		fishReactionsEnabled: true,
+		planeCount:           2,
+		fishPerPlane:         15,
+		fishSizeCap:          45,
+		fishSpeedModifier:    1.0,
+		playerAcceleration:   0.5,
+		playerDeceleration:   -0.025,
 	}
 
 }
@@ -754,6 +781,7 @@ func (g *Game) ApplyOptions() {
 	g.options.fishPerPlane = g.optionsMenu[1].GetValue()
 	g.options.fishSpeedModifier = g.optionsMenu[2].GetValue()
 	g.options.fishSizeCap = g.optionsMenu[3].GetValue()
+	g.options.fishReactionsEnabled = g.optionsMenu[4].GetValue() == 1
 	g.GenerateFish()
 	for i, _ := range g.fish {
 		g.fish[i].Randomize()
@@ -786,7 +814,7 @@ func (g *Game) GameCycle() error {
 	}
 	if !g.playerFish.Dead {
 		g.GetBackgroundColor(g.playerFish.Y)
-		if isAnyOfKeysPressed(true, ebiten.KeyP, ebiten.KeyPause, ebiten.KeyEnter) {
+		if isAnyOfKeysPressed(true, ebiten.KeyP, ebiten.KeyPause, ebiten.KeyEnter) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonCenterRight) {
 			g.paused = !g.paused
 		}
 		if isAnyOfKeysPressed(true, ebiten.KeyEscape) {
@@ -796,13 +824,16 @@ func (g *Game) GameCycle() error {
 				g.paused = true
 			}
 		}
+		if g.paused && g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightRight) {
+			g.GoToMenu(false)
+		}
 	}
 
 	return nil
 }
 
 func (g *Game) GameOverCycle() error {
-	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) {
+	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightBottom, ebiten.StandardGamepadButtonCenterRight) {
 		g.Restart()
 	}
 	return nil
@@ -812,10 +843,16 @@ func (g *Game) MenuCycle() error {
 	for i, _ := range g.fish {
 		g.fish[i].Move()
 	}
-	if isAnyOfKeysPressed(true, ebiten.KeyArrowDown, ebiten.KeyS) {
+	if x, y := ebiten.CursorPosition(); (float64(y) >= 0.9*g.screenHeight && float64(x) < 0.03*g.screenWidth && inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0)) || isAnyOfKeysPressed(true, ebiten.KeyH) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonCenterLeft) {
+		g.menuHidden = !g.menuHidden
+	}
+	if g.menuHidden {
+		return nil
+	}
+	if g.MenuButtonDown() {
 		g.activeMenuIndex = int(math.Min(float64(g.activeMenuIndex+1), float64(len(g.mainMenu)-1)))
 	}
-	if isAnyOfKeysPressed(true, ebiten.KeyArrowUp, ebiten.KeyW) {
+	if g.MenuButtonUp() {
 		g.activeMenuIndex = int(math.Max(float64(g.activeMenuIndex-1), 0))
 	}
 	if g.HasMouseMoved() {
@@ -826,17 +863,17 @@ func (g *Game) MenuCycle() error {
 		}
 	}
 
-	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeyEnter, ebiten.KeySpace) {
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeyEnter, ebiten.KeySpace) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightBottom, ebiten.StandardGamepadButtonCenterRight) {
 		switch g.activeMenuIndex {
 		case 0:
 			g.Start()
 		case 1:
 			g.GoToOptions()
+		case 2:
+			os.Exit(0)
 		}
 	}
-	if isAnyOfKeysPressed(true, ebiten.KeyH) {
-		g.menuHidden = !g.menuHidden
-	}
+
 	return nil
 }
 
@@ -844,13 +881,13 @@ func (g *Game) OptionsCycle() error {
 	for i, _ := range g.fish {
 		g.fish[i].Move()
 	}
-	if isAnyOfKeysPressed(true, ebiten.KeyEscape) {
+	if isAnyOfKeysPressed(true, ebiten.KeyEscape) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightRight) {
 		g.GoToMenu(true)
 	}
-	if isAnyOfKeysPressed(true, ebiten.KeyArrowDown, ebiten.KeyS) {
+	if g.MenuButtonDown() {
 		g.activeMenuIndex = int(math.Min(float64(g.activeMenuIndex+1), float64(len(g.optionsMenu)-1)))
 	}
-	if isAnyOfKeysPressed(true, ebiten.KeyArrowUp, ebiten.KeyW) {
+	if g.MenuButtonUp() {
 		g.activeMenuIndex = int(math.Max(float64(g.activeMenuIndex-1), 0))
 	}
 
@@ -861,24 +898,24 @@ func (g *Game) OptionsCycle() error {
 			}
 		}
 	}
-	if g.activeMenuIndex != 4 {
-		if isAnyOfKeysPressed(true, ebiten.KeyD, ebiten.KeyArrowRight) {
+	if g.activeMenuIndex != 5 {
+		if g.MenuButtonRight() {
 			if g.optionsMenu[g.activeMenuIndex].ShiftRight() {
 				g.ApplyOptions()
 			}
 		}
-		if isAnyOfKeysPressed(true, ebiten.KeyA, ebiten.KeyArrowLeft) {
+		if g.MenuButtonLeft() {
 			if g.optionsMenu[g.activeMenuIndex].ShiftLeft() {
 				g.ApplyOptions()
 			}
 		}
 	}
-	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeyEnter, ebiten.KeySpace) {
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeyEnter, ebiten.KeySpace) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightBottom) {
 		switch {
-		case g.activeMenuIndex < 4:
+		case g.activeMenuIndex < 5:
 			g.optionsMenu[g.activeMenuIndex].CycleRight()
 			g.ApplyOptions()
-		case g.activeMenuIndex == 4:
+		case g.activeMenuIndex == 5:
 			g.GoToMenu(false)
 		}
 	}
@@ -886,7 +923,7 @@ func (g *Game) OptionsCycle() error {
 }
 
 func (g *Game) VictoryCycle() error {
-	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEscape, ebiten.KeyEnter) {
+	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEscape, ebiten.KeyEnter) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightRight, ebiten.StandardGamepadButtonRightBottom, ebiten.StandardGamepadButtonCenterRight) {
 		g.GoToMenu(false)
 	}
 	return nil
@@ -899,6 +936,22 @@ func (g *Game) HasMouseMoved() (hasMoved bool) {
 	}
 	g.prevCurX, g.prevCurY = x, y
 	return
+}
+
+func (g *Game) MenuButtonUp() bool {
+	return isAnyOfKeysPressed(true, ebiten.KeyArrowUp, ebiten.KeyW) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonLeftTop)
+}
+
+func (g *Game) MenuButtonDown() bool {
+	return isAnyOfKeysPressed(true, ebiten.KeyArrowDown, ebiten.KeyS) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonLeftBottom)
+}
+
+func (g *Game) MenuButtonLeft() bool {
+	return isAnyOfKeysPressed(true, ebiten.KeyA, ebiten.KeyArrowLeft) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonLeftLeft)
+}
+
+func (g *Game) MenuButtonRight() bool {
+	return isAnyOfKeysPressed(true, ebiten.KeyD, ebiten.KeyArrowRight) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonLeftRight)
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
@@ -927,8 +980,8 @@ func (g *Game) DrawGame() {
 	}
 	g.playerFish.Draw()
 	if g.options.debugEnabled {
-		ebitenutil.DebugPrint(g.screen, fmt.Sprintf("Fish position (X Y): %0.2f %0.2f Fish Speed (X Y): %0.5f %0.5f Size: %0.0f",
-			g.playerFish.X, g.playerFish.Y, g.playerFish.SpeedX, g.playerFish.SpeedY, g.playerFish.Size))
+		ebitenutil.DebugPrint(g.screen, fmt.Sprintf("Fish position (X Y): %0.2f %0.2f Fish Speed (X Y): %0.5f %0.5f Size: %0.0f axis: %0.2f",
+			g.playerFish.X, g.playerFish.Y, g.playerFish.SpeedX, g.playerFish.SpeedY, g.playerFish.Size, ebiten.StandardGamepadAxisValue(g.gamepadId, ebiten.StandardGamepadAxisLeftStickHorizontal)))
 	}
 
 }
@@ -1193,4 +1246,41 @@ func isAnyOfKeysPressed(just bool, keys ...ebiten.Key) bool {
 		}
 	}
 	return false
+}
+
+func (g *Game) isAnyGamepadButtonsPressed(just bool, buttons ...ebiten.StandardGamepadButton) (pressed bool) {
+	var method func(id ebiten.GamepadID, button ebiten.StandardGamepadButton) bool
+	if just {
+		method = inpututil.IsStandardGamepadButtonJustPressed
+	} else {
+		method = ebiten.IsStandardGamepadButtonPressed
+	}
+
+	if ebiten.IsStandardGamepadLayoutAvailable(g.gamepadId) {
+		for _, button := range buttons {
+			if method(g.gamepadId, button) {
+				pressed = true
+			}
+		}
+
+	}
+	return
+}
+
+func (g *Game) VibrateGamepad(milliseconds time.Duration, strong, weak float64) {
+	op := &ebiten.VibrateGamepadOptions{
+		Duration:        milliseconds * time.Millisecond,
+		StrongMagnitude: strong,
+		WeakMagnitude:   weak,
+	}
+	ebiten.VibrateGamepad(g.gamepadId, op)
+
+}
+
+func (g *Game) VibrateGamepadQuick() {
+	g.VibrateGamepad(200, 0, 0.5)
+}
+
+func (g *Game) VibrateGamepadHeavy() {
+	g.VibrateGamepad(500, 0.5, 0)
 }
