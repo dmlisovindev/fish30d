@@ -450,13 +450,10 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 	}
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButton0) {
 		jx, jy := ebiten.CursorPosition()
-		driveX, driveY = float64(jx)-fish.X, float64(jy)-fish.Y
-		// if math.Abs(driveX) < fish.HalfWidth {
-		// 	driveX = 0
-		// }
-		// if math.Abs(driveY) < fish.HalfHeight {
-		// 	driveY = 0
-		// }
+		mx, my := float64(jx)-fish.X, float64(jy)-fish.Y
+		if math.Hypot(mx, my) >= fish.HalfHeight {
+			driveX, driveY = mx, my
+		}
 	}
 	if fish.game.options.debugEnabled {
 
@@ -472,9 +469,12 @@ func (fish *PlayerFish) ReadInput() (driveX, driveY float64) {
 	}
 
 	if ebiten.IsStandardGamepadLayoutAvailable(fish.game.gamepadId) {
-		driveX, driveY = ebiten.StandardGamepadAxisValue(fish.game.gamepadId, ebiten.StandardGamepadAxisLeftStickHorizontal), ebiten.StandardGamepadAxisValue(fish.game.gamepadId, ebiten.StandardGamepadAxisLeftStickVertical)
+		gx, gy := ebiten.StandardGamepadAxisValue(fish.game.gamepadId, ebiten.StandardGamepadAxisLeftStickHorizontal), ebiten.StandardGamepadAxisValue(fish.game.gamepadId, ebiten.StandardGamepadAxisLeftStickVertical)
+		if math.Hypot(gx, gy) > 0.25 {
+			driveX, driveY = gx, gy
+		}
 	}
-	if driveAbs := math.Sqrt(math.Pow(driveX, 2) + math.Pow(driveY, 2)); driveAbs > 1 {
+	if driveAbs := math.Hypot(driveX, driveY); driveAbs > 1 {
 		driveX, driveY = driveX/driveAbs, driveY/driveAbs
 	}
 	if driveX != 0 || driveY != 0 {
@@ -671,6 +671,7 @@ func NewGame() *Game {
 
 func (g *Game) CreateMenus() {
 	face := g.GetFontFace("big", true)
+	faceOpt := g.GetFontFace("biggish", true)
 	x := 0.2 * g.screenWidth
 	y := 0.35 * g.screenHeight
 	h := 0.2 * g.screenHeight
@@ -687,22 +688,15 @@ func (g *Game) CreateMenus() {
 		})
 		y += h
 	}
-	g.mainMenu = append(g.mainMenu, MenuItem{
-		title:    title,
-		x:        x,
-		y:        y,
-		h:        h,
-		fontFace: face,
-	})
 	x = 0.2 * g.screenWidth
 	y = 0.075 * g.screenHeight
-	h = 0.15 * g.screenHeight
+	h = 0.12 * g.screenHeight
 	g.optionsMenu = append(g.optionsMenu, MenuItem{
 		title:    "Game planes",
 		x:        x,
 		y:        y,
 		h:        h,
-		fontFace: face,
+		fontFace: faceOpt,
 		selector: 1,
 		titles:   []string{"1", "2"},
 		values:   []float64{1, 2},
@@ -713,7 +707,7 @@ func (g *Game) CreateMenus() {
 		x:        x,
 		y:        y,
 		h:        h,
-		fontFace: face,
+		fontFace: faceOpt,
 		selector: 2,
 		titles:   []string{"scarce", "less", "normal", "more", "swarm"},
 		values:   []float64{5, 10, 15, 20, 25},
@@ -725,7 +719,7 @@ func (g *Game) CreateMenus() {
 		x:        x,
 		y:        y,
 		h:        h,
-		fontFace: face,
+		fontFace: faceOpt,
 		selector: 1,
 		titles:   []string{"slow", "normal", "fast", "frenzy"},
 		values:   []float64{0.5, 1, 1.5, 2},
@@ -736,7 +730,7 @@ func (g *Game) CreateMenus() {
 		x:        x,
 		y:        y,
 		h:        h,
-		fontFace: face,
+		fontFace: faceOpt,
 		selector: 0,
 		titles:   []string{"big", "bigger", "biggest"},
 		values:   []float64{45, 60, 75},
@@ -747,9 +741,20 @@ func (g *Game) CreateMenus() {
 		x:        x,
 		y:        y,
 		h:        h,
-		fontFace: face,
+		fontFace: faceOpt,
 		selector: 1,
 		titles:   []string{"off", "on"},
+		values:   []float64{0, 1},
+	})
+	y += h
+	g.optionsMenu = append(g.optionsMenu, MenuItem{
+		title:    "Fullscreen",
+		x:        x,
+		y:        y,
+		h:        h,
+		fontFace: faceOpt,
+		selector: 0,
+		titles:   []string{"no", "yes"},
 		values:   []float64{0, 1},
 	})
 	y += h
@@ -758,7 +763,7 @@ func (g *Game) CreateMenus() {
 		x:        x,
 		y:        y,
 		h:        h,
-		fontFace: face,
+		fontFace: faceOpt,
 	})
 }
 
@@ -782,6 +787,7 @@ func (g *Game) ApplyOptions() {
 	g.options.fishSpeedModifier = g.optionsMenu[2].GetValue()
 	g.options.fishSizeCap = g.optionsMenu[3].GetValue()
 	g.options.fishReactionsEnabled = g.optionsMenu[4].GetValue() == 1
+	ebiten.SetFullscreen(g.optionsMenu[5].GetValue() == 1)
 	g.GenerateFish()
 	for i, _ := range g.fish {
 		g.fish[i].Randomize()
@@ -836,6 +842,10 @@ func (g *Game) GameOverCycle() error {
 	if isAnyOfKeysPressed(true, ebiten.KeySpace, ebiten.KeyEnter) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButton2) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightBottom, ebiten.StandardGamepadButtonCenterRight) {
 		g.Restart()
 	}
+	if isAnyOfKeysPressed(true, ebiten.KeyEscape) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightRight) {
+		g.GoToMenu(true)
+	}
+
 	return nil
 }
 
@@ -845,6 +855,7 @@ func (g *Game) MenuCycle() error {
 	}
 	if x, y := ebiten.CursorPosition(); (float64(y) >= 0.9*g.screenHeight && float64(x) < 0.03*g.screenWidth && inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0)) || isAnyOfKeysPressed(true, ebiten.KeyH) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonCenterLeft) {
 		g.menuHidden = !g.menuHidden
+		return nil
 	}
 	if g.menuHidden {
 		return nil
@@ -878,6 +889,7 @@ func (g *Game) MenuCycle() error {
 }
 
 func (g *Game) OptionsCycle() error {
+	backIndex := len(g.optionsMenu) - 1
 	for i, _ := range g.fish {
 		g.fish[i].Move()
 	}
@@ -885,7 +897,7 @@ func (g *Game) OptionsCycle() error {
 		g.GoToMenu(true)
 	}
 	if g.MenuButtonDown() {
-		g.activeMenuIndex = int(math.Min(float64(g.activeMenuIndex+1), float64(len(g.optionsMenu)-1)))
+		g.activeMenuIndex = int(math.Min(float64(g.activeMenuIndex+1), float64(backIndex)))
 	}
 	if g.MenuButtonUp() {
 		g.activeMenuIndex = int(math.Max(float64(g.activeMenuIndex-1), 0))
@@ -898,7 +910,7 @@ func (g *Game) OptionsCycle() error {
 			}
 		}
 	}
-	if g.activeMenuIndex != 5 {
+	if g.activeMenuIndex != backIndex {
 		if g.MenuButtonRight() {
 			if g.optionsMenu[g.activeMenuIndex].ShiftRight() {
 				g.ApplyOptions()
@@ -912,10 +924,10 @@ func (g *Game) OptionsCycle() error {
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButton0) || isAnyOfKeysPressed(true, ebiten.KeyEnter, ebiten.KeySpace) || g.isAnyGamepadButtonsPressed(true, ebiten.StandardGamepadButtonRightBottom) {
 		switch {
-		case g.activeMenuIndex < 5:
+		case g.activeMenuIndex < backIndex:
 			g.optionsMenu[g.activeMenuIndex].CycleRight()
 			g.ApplyOptions()
-		case g.activeMenuIndex == 5:
+		case g.activeMenuIndex == backIndex:
 			g.GoToMenu(false)
 		}
 	}
@@ -1020,7 +1032,6 @@ func (g *Game) DrawMenu() {
 	} else {
 		text.Draw(g.screen, ">", plainFace, footerOp)
 	}
-
 }
 
 func (g *Game) DrawOptions() {
@@ -1028,7 +1039,6 @@ func (g *Game) DrawOptions() {
 	for i, menuItem := range g.optionsMenu {
 		menuItem.Draw(g.screen, i == g.activeMenuIndex)
 	}
-
 }
 
 func (g *Game) DrawVictory() {
@@ -1196,6 +1206,7 @@ func (g *Game) setFontsSizes() {
 	clear(g.fontSizes)
 	g.fontSizes["logo"] = 0.15 * g.screenHeight
 	g.fontSizes["big"] = 0.1 * g.screenHeight
+	g.fontSizes["biggish"] = 0.08 * g.screenHeight
 	g.fontSizes["medium"] = 0.05 * g.screenHeight
 	g.fontSizes["small"] = 0.03 * g.screenHeight
 
