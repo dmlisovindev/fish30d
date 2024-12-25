@@ -857,7 +857,7 @@ func (g *Game) DrawScores() {
 	face := g.GetFontFace("medium", true)
 	op.GeoM.Translate(0.4*g.screenWidth, 0.5*g.screenHeight)
 	text.Draw(g.screen, fmt.Sprintf("FISH EATEN: %0.0f", g.eaten), face, op)
-	op.GeoM.Translate(0.035*g.screenWidth, 0.1*g.screenHeight)
+	op.GeoM.Translate(0.03*g.screenWidth, 0.1*g.screenHeight)
 	text.Draw(g.screen, fmt.Sprintf("SCORE: %0.0f", g.score), face, op)
 }
 
@@ -1161,7 +1161,7 @@ func (g *Game) Update() error {
 
 func (g *Game) UpdateScore(targetSize float64) {
 	g.eaten++
-	g.score += targetSize
+	g.score += g.fishSpeedModifier*targetSize*10 + g.fishPerPlane
 	g.highScore = math.Max(g.highScore, g.score)
 	g.mostEaten = math.Max(g.eaten, g.mostEaten)
 
